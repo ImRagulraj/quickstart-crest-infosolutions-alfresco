@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Vpc:
+    Type: String
+    Description: "The ID of the VPC"
+  
+  Subnet1:
+    Type: String
+    Description: "The ID of the Subnet1"
+
+  Subnet2:
+    Type: String
+    Description: "The ID of the Subnet2"
+
+  Subnet3:
+    Type: String
+    Description: "The ID of the Subnet3"
+
+Resources:
+  AlfrescokendraconnectorService:
+    DependsOn:
+    - AlfrescokendraconnectorTCP8002Listener
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: alfresco-kendra-connector
+        ContainerPort: 8002
+        TargetGroupArn:
+          Ref: AlfrescokendraconnectorTCP8002TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: CrestnetworkNetwork
+          Subnets:
+          - !Ref Subnet1
+          - !Ref Subnet2
+          - !Ref Subnet3
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - AlfrescokendraconnectorServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      - Key: com.docker.compose.service
+        Value: alfresco-kendra-connector
+      TaskDefinition:
+        Ref: AlfrescokendraconnectorTaskDefinition
+    Type: AWS::ECS::Service
+
+  AlfrescokendraconnectorServiceDiscoveryEntry:
+    Properties:
+      Description: '"alfresco-kendra-connector" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: alfresco-kendra-connector
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+
+  AlfrescokendraconnectorTCP8002Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: AlfrescokendraconnectorTCP8002TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 8002
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+
+  AlfrescokendraconnectorTCP8002TargetGroup:
+    Properties:
+      Port: 8002
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      TargetType: ip
+      VpcId: !Ref Vpc
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+
+  AlfrescokendraconnectorTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-east-1.compute.internal
+        - desktop.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: desktop
+        Name: Alfrescokendraconnector_ResolvConf_InitContainer
+      - DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Alfrescokendraconnector_ResolvConf_InitContainer
+        Environment:
+        - Name: DYNAMO_ACCESSKEY
+          Value: AKIA2I3V6TS5SVYRMFXC
+        - Name: DYNAMO_REGION
+          Value: ap-south-1
+        - Name: DYNAMO_SECRETKEY
+          Value: /ZNedJpo1kXUY/t6PKAKFCFnx0oAbXBQ3oJIi3vq
+        - Name: DYNAMO_TABLE_PREFIX
+          Value: prefix
+        - Name: SERVER_API_PORT
+          Value: "8002"
+        Essential: true
+        Image: 447497348836.dkr.ecr.ap-south-1.amazonaws.com/alfresco-kendra-connector:latest@sha256:3953896a45766cee980f42758a449c635531265d27fceed9ce058e7a8539c29a
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: desktop
+        Name: alfresco-kendra-connector
+        PortMappings:
+        - ContainerPort: 8002
+          HostPort: 8002
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: AlfrescokendraconnectorTaskExecutionRole
+      Family: desktop-alfresco-kendra-connector
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+
+  AlfrescokendraconnectorTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      - Key: com.docker.compose.service
+        Value: alfresco-kendra-connector
+    Type: AWS::IAM::Role
+
+  CloudMap:
+    Properties:
+      Description: Service Map for Docker Compose project desktop
+      Name: desktop.local
+      Vpc: !Ref Vpc
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+
+  Cluster:
+    Properties:
+      ClusterName: desktop
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+    Type: AWS::ECS::Cluster
+
+  Crestnetwork8002Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: alfresco-kendra-connector:8002/tcp on crest-network network
+      FromPort: 8002
+      GroupId:
+        Ref: CrestnetworkNetwork
+      IpProtocol: TCP
+      ToPort: 8002
+    Type: AWS::EC2::SecurityGroupIngress
+
+  Crestnetwork8080Ingress:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      Description: workspace-kendra:8080/tcp on crest-network network
+      FromPort: 8080
+      GroupId:
+        Ref: CrestnetworkNetwork
+      IpProtocol: TCP
+      ToPort: 8080
+    Type: AWS::EC2::SecurityGroupIngress
+
+  CrestnetworkNetwork:
+    Properties:
+      GroupDescription: desktop Security Group for crest-network network
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      - Key: com.docker.compose.network
+        Value: desktop_crest-network
+      VpcId: !Ref Vpc
+    Type: AWS::EC2::SecurityGroup
+
+  CrestnetworkNetworkIngress:
+    Properties:
+      Description: Allow communication within network crest-network
+      GroupId:
+        Ref: CrestnetworkNetwork
+      IpProtocol: "-1"
+      SourceSecurityGroupId:
+        Ref: CrestnetworkNetwork
+    Type: AWS::EC2::SecurityGroupIngress
+
+  LoadBalancer:
+    Properties:
+      LoadBalancerAttributes:
+      - Key: load_balancing.cross_zone.enabled
+        Value: "true"
+      Scheme: internet-facing
+      Subnets:
+          - !Ref Subnet1
+          - !Ref Subnet2
+          - !Ref Subnet3
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      Type: network
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+
+  LogGroup:
+    Properties:
+      LogGroupName: /docker-compose/desktop
+    Type: AWS::Logs::LogGroup
+
+  WorkspacekendraService:
+    DependsOn:
+    - WorkspacekendraTCP8080Listener
+    Properties:
+      Cluster:
+        Fn::GetAtt:
+        - Cluster
+        - Arn
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+      - ContainerName: workspace-kendra
+        ContainerPort: 8080
+        TargetGroupArn:
+          Ref: WorkspacekendraTCP8080TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+          - Ref: CrestnetworkNetwork
+          Subnets:
+          - !Ref Subnet1
+          - !Ref Subnet2
+          - !Ref Subnet3
+      PlatformVersion: 1.4.0
+      PropagateTags: SERVICE
+      SchedulingStrategy: REPLICA
+      ServiceRegistries:
+      - RegistryArn:
+          Fn::GetAtt:
+          - WorkspacekendraServiceDiscoveryEntry
+          - Arn
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      - Key: com.docker.compose.service
+        Value: workspace-kendra
+      TaskDefinition:
+        Ref: WorkspacekendraTaskDefinition
+    Type: AWS::ECS::Service
+
+  WorkspacekendraServiceDiscoveryEntry:
+    Properties:
+      Description: '"workspace-kendra" service discovery entry in Cloud Map'
+      DnsConfig:
+        DnsRecords:
+        - TTL: 60
+          Type: A
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: workspace-kendra
+      NamespaceId:
+        Ref: CloudMap
+    Type: AWS::ServiceDiscovery::Service
+
+  WorkspacekendraTCP8080Listener:
+    Properties:
+      DefaultActions:
+      - ForwardConfig:
+          TargetGroups:
+          - TargetGroupArn:
+              Ref: WorkspacekendraTCP8080TargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: LoadBalancer
+      Port: 80
+      Protocol: TCP
+    Type: AWS::ElasticLoadBalancingV2::Listener
+
+  WorkspacekendraTCP8080TargetGroup:
+    Properties:
+      Port: 8080
+      Protocol: TCP
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      TargetType: ip
+      VpcId: !Ref Vpc
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+
+  WorkspacekendraTaskDefinition:
+    Properties:
+      ContainerDefinitions:
+      - Command:
+        - us-east-1.compute.internal
+        - desktop.local
+        Essential: false
+        Image: docker/ecs-searchdomain-sidecar:1.0
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: desktop
+        Name: Workspacekendra_ResolvConf_InitContainer
+      - DependsOn:
+        - Condition: SUCCESS
+          ContainerName: Workspacekendra_ResolvConf_InitContainer
+        Environment:
+        - Name: APP_CONFIG_PROVIDER
+          Value: ECM
+        - Name: SERVER_ALFRESCO_ACTIVITI_PROXY
+          Value: https://alfresco-demo.crestsolution.com:4200
+        - Name: SERVER_ALFRESCO_PROXY
+          Value: https://alfresco-demo.crestsolution.com:4200
+        - Name: SERVER_KENDRA_CONNECTOR_PROXY
+          Value: http://alfresco-kendra-connector:8002
+        - Name: SERVER_NAME_LISTEN
+          Value: localhost
+        - Name: SERVER_PORT_LISTEN
+          Value: "8080"
+        Essential: true
+        Image: 447497348836.dkr.ecr.ap-south-1.amazonaws.com/adf-workspace-kendra:latest@sha256:60fbc9a4674cdf3747605255424761e4298e66ed61202b11a570f9931bbf206c
+        LinuxParameters: {}
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: LogGroup
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: desktop
+        Name: workspace-kendra
+        PortMappings:
+        - ContainerPort: 8080
+          HostPort: 8080
+          Protocol: tcp
+      Cpu: "256"
+      ExecutionRoleArn:
+        Ref: WorkspacekendraTaskExecutionRole
+      Family: desktop-workspace-kendra
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+    Type: AWS::ECS::TaskDefinition
+
+  WorkspacekendraTaskExecutionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Condition: {}
+          Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+      - Key: com.docker.compose.project
+        Value: desktop
+      - Key: com.docker.compose.service
+        Value: workspace-kendra
+    Type: AWS::IAM::Role

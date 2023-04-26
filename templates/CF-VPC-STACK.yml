@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  CreateVPC:
+    Type: String
+    Default: "yes"
+    AllowedValues: ["yes", "no"]
+    Description: "Do you want to create new VPC and subnet?"
+
+  MyVpc:
+    Type: String
+    Description: "VPC ID if you want to use an existing VPC"
+  
+  MySubnet1:
+    Type: String
+    Description: "Subnet1 ID if you want to use an existing subnet"
+
+  MySubnet2:
+    Type: String
+    Description: "Subnet2 ID if you want to use an existing subnet"
+
+  MySubnet3:
+    Type: String
+    Description: "Subnet3 ID if you want to use an existing subnet"
+    
+
+Conditions:
+  CreateNewVPC: !Equals [!Ref CreateVPC, "yes"]
+  UseExistingVPC: !Equals [!Ref CreateVPC, "no"]
+
+Resources:
+  VpcId:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      CidrBlock: "172.31.0.0/16"
+      Tags:
+        - Key: Name
+          Value: VpcId
+
+  InternetGateway:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyIGW
+
+  VPCGatewayAttachment:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcId
+      InternetGatewayId: !Ref InternetGateway
+
+  PrivateSubnet1:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "172.31.32.0/20"
+      VpcId: !Ref VpcId
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+  
+  PrivateSubnet2:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "172.31.0.0/20"
+      VpcId: !Ref VpcId
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+  
+  PrivateSubnet3:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "172.31.16.0/20"
+      VpcId: !Ref VpcId
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet3
+
+  RouteTable:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: MyRouteTable
+
+  PrivateRoute:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::Route
+    DependsOn:
+      - SubnetRouteTableAssociation1
+      - SubnetRouteTableAssociation2
+      - SubnetRouteTableAssociation3
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation1:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociation2:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociation3:
+    Condition: CreateNewVPC
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref RouteTable
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: MySecurityGroup
+      GroupDescription: Allow SSH and HTTP access
+      VpcId: !If [UseExistingVPC, !Ref MyVpc, !Ref VpcId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ResourceStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: MySecurityGroup
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/awscf-alfresco/CF-RESOURCE-STACK.yml
+      Parameters:
+        Vpc: !If [UseExistingVPC, !Ref MyVpc, !Ref VpcId]
+        Subnet1: !If [UseExistingVPC, !Ref MySubnet1, !Ref PrivateSubnet1]
+        Subnet2: !If [UseExistingVPC, !Ref MySubnet2, !Ref PrivateSubnet2]
+        Subnet3: !If [UseExistingVPC, !Ref MySubnet3, !Ref PrivateSubnet3]
